@@ -29,7 +29,7 @@ impl GlobalHotkeyListener {
                     is_pressed: AtomicBool::new(false),
                     callback: Arc::clone(&callback),
                 });
-                spawn_hook_thread();
+                spawn_hotkey_thread();
                 c
             })
             .clone();
@@ -56,74 +56,39 @@ impl GlobalHotkeyListener {
 }
 
 #[cfg(windows)]
-fn spawn_hook_thread() {
+fn spawn_hotkey_thread() {
     std::thread::spawn(|| {
-        use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
+        use std::time::Duration;
         use windows::Win32::UI::Input::KeyboardAndMouse::{
             GetAsyncKeyState, VK_CONTROL, VK_MENU, VK_SHIFT,
         };
-        use windows::Win32::UI::WindowsAndMessaging::{
-            CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
-            KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
-            WM_SYSKEYUP,
-        };
 
-        fn is_mod_down(vk: i32) -> bool {
+        fn is_vk_down(vk: i32) -> bool {
             unsafe { (GetAsyncKeyState(vk) as u16 & 0x8000) != 0 }
         }
 
-        unsafe extern "system" fn hook_proc(
-            code: i32,
-            wparam: WPARAM,
-            lparam: LPARAM,
-        ) -> LRESULT {
-            if code >= 0 {
-                if let Some(ctx) = HOOK_CTX.get() {
-                    let target_opt = *ctx.target.lock();
-                    if let Some(target) = target_opt {
-                        let kbd = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-                        let msg = wparam.0 as u32;
-                        let is_down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
-                        let is_up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
+        loop {
+            if let Some(ctx) = HOOK_CTX.get() {
+                let target_opt = *ctx.target.lock();
+                if let Some(target) = target_opt {
+                    let main_down = is_vk_down(target.vk_code as i32);
+                    let ctrl_ok = !target.ctrl || is_vk_down(VK_CONTROL.0 as i32);
+                    let alt_ok = !target.alt || is_vk_down(VK_MENU.0 as i32);
+                    let shift_ok = !target.shift || is_vk_down(VK_SHIFT.0 as i32);
 
-                        if kbd.vkCode == target.vk_code {
-                            if is_down {
-                                let ctrl_ok = !target.ctrl || is_mod_down(VK_CONTROL.0 as i32);
-                                let alt_ok = !target.alt || is_mod_down(VK_MENU.0 as i32);
-                                let shift_ok = !target.shift || is_mod_down(VK_SHIFT.0 as i32);
-
-                                if ctrl_ok
-                                    && alt_ok
-                                    && shift_ok
-                                    && !ctx.is_pressed.swap(true, Ordering::SeqCst)
-                                {
-                                    (ctx.callback)(HotkeyEvent::Pressed);
-                                }
-                            } else if is_up && ctx.is_pressed.swap(false, Ordering::SeqCst) {
-                                (ctx.callback)(HotkeyEvent::Released);
-                            }
+                    if main_down && ctrl_ok && alt_ok && shift_ok {
+                        if !ctx.is_pressed.swap(true, Ordering::SeqCst) {
+                            (ctx.callback)(HotkeyEvent::Pressed);
                         }
+                    } else if !main_down && ctx.is_pressed.swap(false, Ordering::SeqCst) {
+                        (ctx.callback)(HotkeyEvent::Released);
                     }
                 }
             }
-            CallNextHookEx(None, code, wparam, lparam)
-        }
-
-        unsafe {
-            let _hook = SetWindowsHookExW(
-                WH_KEYBOARD_LL,
-                Some(hook_proc),
-                HINSTANCE(std::ptr::null_mut()),
-                0,
-            );
-            let mut msg = MSG::default();
-            while GetMessageW(&mut msg, None, 0, 0).into() {
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
+            std::thread::sleep(Duration::from_millis(15));
         }
     });
 }
 
 #[cfg(not(windows))]
-fn spawn_hook_thread() {}
+fn spawn_hotkey_thread() {}

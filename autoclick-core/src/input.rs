@@ -125,10 +125,14 @@ impl InputBackend for Win32InputBackend {
             }
         }
         let (down, up) = Self::button_flags(button);
-        Self::send_mouse_flags(down | up);
+        Self::send_mouse_flags(down);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        Self::send_mouse_flags(up);
         if click_type == ClickType::Double {
-            std::thread::sleep(std::time::Duration::from_millis(12));
-            Self::send_mouse_flags(down | up);
+            std::thread::sleep(std::time::Duration::from_millis(15));
+            Self::send_mouse_flags(down);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            Self::send_mouse_flags(up);
         }
     }
 
