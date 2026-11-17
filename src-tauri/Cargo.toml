@@ -1,0 +1,23 @@
+[package]
+name = "autoclick"
+version = "1.0.0"
+description = "Modern Windows Auto Clicker Desktop App"
+authors = ["aboutdevz"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "autoclick_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+autoclick-core = { path = "../autoclick-core" }
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-global-shortcut = "2"

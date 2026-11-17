@@ -1,0 +1,19 @@
+[package]
+name = "autoclick-core"
+version = "1.0.0"
+edition = "2021"
+description = "Core clicking engine, configuration, and Win32 input abstraction for AutoClick"
+license = "MIT"
+
+[dependencies]
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+parking_lot = "0.12"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }

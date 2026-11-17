@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.0.0)"
+        required: true
+        default: "v1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    name: Build & Release Windows (Installer + Portable)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri application (NSIS Installer + Binary)
+        run: npm run tauri build
+
+      - name: Package Portable & Checksums
+        shell: pwsh
+        run: |
+          $tag = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } else { "${{ github.event.inputs.tag }}" }
+          $ver = $tag.TrimStart("v")
+
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+
+          # 1. Copy NSIS Installer
+          $installer = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*-setup.exe" | Select-Object -First 1
+          if (-not $installer) { throw "NSIS installer not found!" }
+          Copy-Item $installer.FullName "release-assets/AutoClick_${ver}_x64-setup.exe"
+
+          # 2. Create Portable ZIP (with portable.flag so config.json stays next to the exe)
+          New-Item -ItemType Directory -Force -Path portable-stage | Out-Null
+          Copy-Item "src-tauri/target/release/autoclick.exe" "portable-stage/AutoClick.exe"
+          New-Item -ItemType File -Force -Path "portable-stage/portable.flag" | Out-Null
+          Copy-Item "LICENSE" "portable-stage/LICENSE"
+          Copy-Item "README.md" "portable-stage/README.md"
+          Compress-Archive -Path "portable-stage/*" -DestinationPath "release-assets/AutoClick_${ver}_x64-portable.zip" -Force
+
+          # 3. Also provide standalone portable executable (run with --portable or alongside portable.flag)
+          Copy-Item "src-tauri/target/release/autoclick.exe" "release-assets/AutoClick_${ver}_x64-portable.exe"
+
+          # 4. Generate SHA256SUMS.txt
+          Get-ChildItem "release-assets/*" | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)"
+          } | Out-File -Encoding utf8 "release-assets/SHA256SUMS.txt"
+
+          Get-ChildItem "release-assets"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.tag }}
+          name: AutoClick ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.tag }}
+          generate_release_notes: true
+          files: release-assets/*

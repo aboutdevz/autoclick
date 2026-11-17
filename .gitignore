@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-ssr/
+*.local
+
+# Rust / Tauri
+src-tauri/target/
+autoclick-core/target/
+target/
+Cargo.lock
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
