@@ -62,11 +62,13 @@ jobs:
           # 3. Also provide standalone portable executable (run with --portable or alongside portable.flag)
           Copy-Item "src-tauri/target/release/autoclick.exe" "release-assets/AutoClick_${ver}_x64-portable.exe"
 
-          # 4. Generate SHA256SUMS.txt
-          Get-ChildItem "release-assets/*" | ForEach-Object {
-            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-            "$hash  $($_.Name)"
-          } | Out-File -Encoding utf8 "release-assets/SHA256SUMS.txt"
+          # 4. Generate SHA256SUMS.txt (collect hashes in memory before writing file)
+          $files = Get-ChildItem "release-assets/*" -File | Where-Object { $_.Name -ne "SHA256SUMS.txt" }
+          $sums = foreach ($f in $files) {
+            $hash = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($f.Name)"
+          }
+          $sums | Out-File -Encoding utf8 "release-assets/SHA256SUMS.txt"
 
           Get-ChildItem "release-assets"
 
