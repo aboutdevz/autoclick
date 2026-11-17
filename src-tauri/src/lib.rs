@@ -2,7 +2,7 @@ mod tray;
 
 use autoclick_core::{
     default_backend, load_config, resolve_config_path, save_config, AppConfig, ClickEngine,
-    EngineStatus, HotkeyMode, InputBackend,
+    EngineStatus, GlobalHotkeyListener, HotkeyEvent, HotkeyMode, InputBackend,
 };
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -11,11 +11,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartExt};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 struct AppState {
     engine: ClickEngine,
     backend: Arc<dyn InputBackend>,
+    hotkey_listener: GlobalHotkeyListener,
     config: Mutex<AppConfig>,
     config_path: PathBuf,
     is_portable: bool,
@@ -55,16 +55,6 @@ fn toggle_clicking_with_app<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-fn register_hotkey<R: Runtime>(app: &AppHandle<R>, hotkey: &str) -> Result<(), String> {
-    let gs = app.global_shortcut();
-    let _ = gs.unregister_all();
-    if hotkey.trim().is_empty() {
-        return Ok(());
-    }
-    gs.register(hotkey)
-        .map_err(|e| format!("Invalid or unavailable hotkey '{hotkey}': {e}"))
-}
-
 #[tauri::command]
 fn get_config(state: State<'_, AppState>) -> ConfigResponse {
     ConfigResponse {
@@ -82,7 +72,7 @@ fn save_app_config<R: Runtime>(
     let old_config = state.config.lock().clone();
 
     if old_config.hotkey != new_config.hotkey {
-        register_hotkey(&app, &new_config.hotkey)?;
+        state.hotkey_listener.set_hotkey(&new_config.hotkey)?;
     }
 
     if old_config.launch_on_startup != new_config.launch_on_startup {
@@ -189,29 +179,6 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
         ))
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    let state = app.state::<AppState>();
-                    let mode = state.config.lock().hotkey_mode;
-                    match mode {
-                        HotkeyMode::Toggle => {
-                            if event.state == ShortcutState::Pressed {
-                                toggle_clicking_with_app(app);
-                            }
-                        }
-                        HotkeyMode::Hold => match event.state {
-                            ShortcutState::Pressed => {
-                                start_engine_with_app(app, &state);
-                            }
-                            ShortcutState::Released => {
-                                state.engine.stop();
-                            }
-                        },
-                    }
-                })
-                .build(),
-        )
         .setup(move |app| {
             let app_data_dir = app.path().app_data_dir().ok();
             let exe_dir = std::env::current_exe()
@@ -228,9 +195,35 @@ pub fn run() {
             let start_minimized = config.start_minimized || cli_minimized;
             let initial_hotkey = config.hotkey.clone();
 
+            let app_handle = app.handle().clone();
+            let hotkey_listener = GlobalHotkeyListener::start(
+                &initial_hotkey,
+                Arc::new(move |event: HotkeyEvent| {
+                    let state = app_handle.state::<AppState>();
+                    let mode = state.config.lock().hotkey_mode;
+                    match mode {
+                        HotkeyMode::Toggle => {
+                            if event == HotkeyEvent::Pressed {
+                                toggle_clicking_with_app(&app_handle);
+                            }
+                        }
+                        HotkeyMode::Hold => match event {
+                            HotkeyEvent::Pressed => {
+                                start_engine_with_app(&app_handle, &state);
+                            }
+                            HotkeyEvent::Released => {
+                                state.engine.stop();
+                            }
+                        },
+                    }
+                }),
+            )
+            .expect("failed to initialize global hotkey listener");
+
             app.manage(AppState {
                 engine,
                 backend,
+                hotkey_listener,
                 config: Mutex::new(config),
                 config_path,
                 is_portable,
@@ -240,8 +233,6 @@ pub fn run() {
             tray::setup_tray(app.handle(), |handle| {
                 toggle_clicking_with_app(handle);
             })?;
-
-            let _ = register_hotkey(app.handle(), &initial_hotkey);
 
             if !start_minimized {
                 tray::show_main_window(app.handle());
